@@ -4,7 +4,6 @@
 #include <ctype.h>
 #include <stdbool.h>
 
-// Tipos de tokens expandidos
 typedef enum {
     TOKEN_EOF,
     TOKEN_IDENTIFIER,
@@ -19,14 +18,12 @@ typedef enum {
     TOKEN_PREPROCESSOR
 } TokenType;
 
-// Palavras-chave da linguagem
 const char* KEYWORDS[] = {
     "if", "else", "while", "for", "return",
     "int", "float", "char", "void", "struct",
     "typedef", "#include", "#define", NULL
 };
 
-// Operadores
 const char* OPERATORS[] = {
     "+", "-", "*", "/", "%", "=", "==", "!=", "<", ">", 
     "<=", ">=", "&&", "||", "!", "&", "|", "^", "~", 
@@ -34,7 +31,6 @@ const char* OPERATORS[] = {
     NULL
 };
 
-// Pontuação
 const char* PUNCTUATION[] = {
     ";", ",", ".", ":", "(", ")", "{", "}", "[", "]", NULL
 };
@@ -54,7 +50,6 @@ typedef struct {
     int column;
 } Lexer;
 
-// Funções auxiliares
 bool is_keyword(const char* str) {
     for (int i = 0; KEYWORDS[i] != NULL; i++) {
         if (strcmp(str, KEYWORDS[i]) == 0) return true;
@@ -110,12 +105,10 @@ void lexer_advance(Lexer* lexer) {
 }
 
 Token* lexer_next_token(Lexer* lexer) {
-    // Pular espaços em branco
     while (isspace(lexer_peek(lexer, 0))) {
         lexer_advance(lexer);
     }
 
-    // Fim do arquivo
     if (lexer_peek(lexer, 0) == '\0') {
         Token* token = malloc(sizeof(Token));
         token->type = TOKEN_EOF;
@@ -125,7 +118,6 @@ Token* lexer_next_token(Lexer* lexer) {
         return token;
     }
 
-    // Comentários
     if (lexer_peek(lexer, 0) == '/' && lexer_peek(lexer, 1) == '/') {
         while (lexer_peek(lexer, 0) != '\n' && lexer_peek(lexer, 0) != '\0') {
             lexer_advance(lexer);
@@ -148,7 +140,6 @@ Token* lexer_next_token(Lexer* lexer) {
         return lexer_next_token(lexer);
     }
 
-    // Diretivas de pré-processador
     if (lexer->column == 1 && lexer_peek(lexer, 0) == '#') {
         int start = lexer->pos;
         while (isalpha(lexer_peek(lexer, 0)) || lexer_peek(lexer, 0) == '_') {
@@ -164,7 +155,6 @@ Token* lexer_next_token(Lexer* lexer) {
         return token;
     }
 
-    // Strings
     if (lexer_peek(lexer, 0) == '"') {
         lexer_advance(lexer);
         int start = lexer->pos;
@@ -191,7 +181,6 @@ Token* lexer_next_token(Lexer* lexer) {
         return token;
     }
 
-    // Caracteres
     if (lexer_peek(lexer, 0) == '\'') {
         lexer_advance(lexer);
         int start = lexer->pos;
@@ -217,7 +206,6 @@ Token* lexer_next_token(Lexer* lexer) {
         return token;
     }
 
-    // Números
     if (isdigit(lexer_peek(lexer, 0))) {
         int start = lexer->pos;
         bool is_float = false;
@@ -244,7 +232,6 @@ Token* lexer_next_token(Lexer* lexer) {
         return token;
     }
 
-    // Identificadores e palavras-chave
     if (isalpha(lexer_peek(lexer, 0)) || lexer_peek(lexer, 0) == '_') {
         int start = lexer->pos;
         while (isalnum(lexer_peek(lexer, 0)) || lexer_peek(lexer, 0) == '_') {
@@ -261,7 +248,6 @@ Token* lexer_next_token(Lexer* lexer) {
         return token;
     }
 
-    // Operadores
     for (int op_len = 3; op_len > 0; op_len--) {
         if (lexer->pos + op_len > lexer->source_len) continue;
         
@@ -281,7 +267,6 @@ Token* lexer_next_token(Lexer* lexer) {
         }
     }
 
-    // Pontuação
     if (is_punctuation(lexer_peek(lexer, 0))) {
         char punc[2] = {lexer_peek(lexer, 0), '\0'};
         lexer_advance(lexer);
@@ -294,7 +279,6 @@ Token* lexer_next_token(Lexer* lexer) {
         return token;
     }
 
-    // Caractere desconhecido
     fprintf(stderr, "Erro léxico: Caractere inesperado '%c' na linha %d, coluna %d\n",
             lexer_peek(lexer, 0), lexer->line, lexer->column);
     exit(1);
