@@ -1,0 +1,45 @@
+// fibonacci.ac — Recursive and iterative Fibonacci in AC.
+// Demonstrates: recursion, loops, local variables, conditionals.
+
+extern fn printf(fmt: *char, ...) -> i32;
+
+// Recursive Fibonacci: O(2^n) time
+fn fib_recursive(n: i64) -> i64 {
+    if (n <= 1) {
+        return n;
+    }
+    return fib_recursive(n - 1) + fib_recursive(n - 2);
+}
+
+// Iterative Fibonacci: O(n) time, O(1) space
+fn fib_iterative(n: i64) -> i64 {
+    if (n <= 1) { return n; }
+    var a: i64 = 0;
+    var b: i64 = 1;
+    var i: i64 = 2;
+    while (i <= n) {
+        var tmp: i64 = a + b;
+        a = b;
+        b = tmp;
+        i = i + 1;
+    }
+    return b;
+}
+
+fn main() -> i32 {
+    printf("Fibonacci sequence (recursive):\n");
+    var i: i32 = 0;
+    while (i < 15) {
+        printf("  fib(%d) = %lld\n", i, fib_recursive(i as i64));
+        i = i + 1;
+    }
+
+    printf("\nFibonacci sequence (iterative):\n");
+    var j: i32 = 0;
+    while (j < 20) {
+        printf("  fib(%d) = %lld\n", j, fib_iterative(j as i64));
+        j = j + 1;
+    }
+
+    return 0;
+}

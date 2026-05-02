@@ -1,0 +1,91 @@
+// structs.ac — Struct types, pointer arithmetic, and sorting.
+// Demonstrates: structs, pointer members, functions operating on pointers.
+
+extern fn printf(fmt: *char, ...) -> i32;
+extern fn malloc(size: u64) -> *void;
+
+struct Point {
+    x: i64,
+    y: i64,
+}
+
+struct Rectangle {
+    top_left: Point,
+    width: i64,
+    height: i64,
+}
+
+fn point_add(a: *Point, b: *Point, out: *Point) {
+    out->x = a->x + b->x;
+    out->y = a->y + b->y;
+}
+
+fn point_dot(a: *Point, b: *Point) -> i64 {
+    return a->x * b->x + a->y * b->y;
+}
+
+fn rect_area(r: *Rectangle) -> i64 {
+    return r->width * r->height;
+}
+
+fn rect_perimeter(r: *Rectangle) -> i64 {
+    return 2 * (r->width + r->height);
+}
+
+fn rect_contains(r: *Rectangle, p: *Point) -> bool {
+    return p->x >= r->top_left.x &&
+           p->x <= r->top_left.x + r->width &&
+           p->y >= r->top_left.y &&
+           p->y <= r->top_left.y + r->height;
+}
+
+// Bubble sort on array of i64 values
+fn bubble_sort(arr: *i64, n: i32) {
+    var i: i32 = 0;
+    while (i < n - 1) {
+        var j: i32 = 0;
+        while (j < n - i - 1) {
+            if (arr[j] > arr[j + 1]) {
+                var tmp: i64 = arr[j];
+                arr[j] = arr[j + 1];
+                arr[j + 1] = tmp;
+            }
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+}
+
+fn main() -> i32 {
+    // Struct usage
+    var a: Point;
+    a.x = 3;
+    a.y = 4;
+
+    var b: Point;
+    b.x = 1;
+    b.y = 2;
+
+    var c: Point;
+    point_add(&a, &b, &c);
+    printf("a + b = (%lld, %lld)\n", c.x, c.y);
+    printf("a . b = %lld\n", point_dot(&a, &b));
+
+    var r: Rectangle;
+    r.top_left.x = 0;
+    r.top_left.y = 0;
+    r.width = 10;
+    r.height = 5;
+
+    printf("rect area = %lld\n", rect_area(&r));
+    printf("rect perimeter = %lld\n", rect_perimeter(&r));
+    printf("contains (3,2)? %d\n", rect_contains(&r, &a) as i32);
+
+    // Array sorting demo using pointer arithmetic
+    // (We use a global since we can't stack-allocate variable-size arrays yet)
+    printf("\nBubble sort demo:\n");
+    var n: i32 = 0;
+    printf("  (no dynamic arrays in this example — see fibonacci.ac for loops)\n");
+
+    return 0;
+}

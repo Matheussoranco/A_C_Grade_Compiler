@@ -1,0 +1,11 @@
+// hello.ac — Hello World in the AC language.
+// Compile: acc hello.ac -o hello.asm
+// Assemble: nasm -felf64 hello.asm && gcc hello.o -o hello
+// Run: ./hello
+
+extern fn printf(fmt: *char, ...) -> i32;
+
+fn main() -> i32 {
+    printf("Hello, World!\n");
+    return 0;
+}

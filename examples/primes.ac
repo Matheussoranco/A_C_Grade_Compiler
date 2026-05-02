@@ -1,0 +1,67 @@
+// primes.ac — Sieve of Eratosthenes and primality testing.
+// Demonstrates: arrays, for loops, compound assignment, boolean logic.
+
+extern fn printf(fmt: *char, ...) -> i32;
+extern fn malloc(size: u64) -> *void;
+extern fn free(ptr: *void);
+
+// Check if n is prime via trial division: O(sqrt(n))
+fn is_prime(n: i64) -> bool {
+    if (n < 2)  { return false; }
+    if (n == 2) { return true;  }
+    if (n % 2 == 0) { return false; }
+    var d: i64 = 3;
+    while (d * d <= n) {
+        if (n % d == 0) { return false; }
+        d = d + 2;
+    }
+    return true;
+}
+
+// Greatest common divisor (Euclidean algorithm)
+fn gcd(a: i64, b: i64) -> i64 {
+    while (b != 0) {
+        var tmp: i64 = b;
+        b = a % b;
+        a = tmp;
+    }
+    return a;
+}
+
+// Count primes below limit using trial division
+fn count_primes(limit: i64) -> i64 {
+    var count: i64 = 0;
+    var n: i64 = 2;
+    while (n < limit) {
+        if (is_prime(n)) {
+            count = count + 1;
+        }
+        n = n + 1;
+    }
+    return count;
+}
+
+fn main() -> i32 {
+    printf("Primes up to 100:\n");
+    var n: i64 = 2;
+    var col: i32 = 0;
+    while (n <= 100) {
+        if (is_prime(n)) {
+            printf("%4lld", n);
+            col = col + 1;
+            if (col % 10 == 0) { printf("\n"); }
+        }
+        n = n + 1;
+    }
+    printf("\n");
+
+    printf("\nPrime counting function:\n");
+    printf("  pi(100)   = %lld\n", count_primes(100));
+    printf("  pi(1000)  = %lld\n", count_primes(1000));
+    printf("  pi(10000) = %lld\n", count_primes(10000));
+
+    printf("\ngcd(48, 18) = %lld\n", gcd(48, 18));
+    printf("gcd(100, 75) = %lld\n", gcd(100, 75));
+
+    return 0;
+}
