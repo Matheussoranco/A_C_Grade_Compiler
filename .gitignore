@@ -50,3 +50,10 @@ modules.order
 Module.symvers
 Mkfile.old
 dkms.conf
+
+# Build artifacts (binary + generated assembly should not be tracked)
+acc
+acc.exe
+build/*.asm
+build/*.o
+*.o
