@@ -375,8 +375,8 @@ TAC is the minimal representation that exposes data flow without encoding regist
 ### Why Stack-Slot Variables?
 The `alloca`-for-every-variable strategy (borrowed from LLVM's `-O0` codegen) simplifies correctness dramatically: every variable has exactly one canonical storage location. The optimizer's copy-propagation pass eliminates most of the resulting redundant loads.
 
-### Why Linear Scan Register Allocation?
-Graph coloring produces near-optimal allocations but is NP-hard in the general case and complex to implement correctly. Linear scan (Poletto & Sarkar 1999) operates in O(n log n) on sorted live intervals and produces code within 10–15% of optimal on typical workloads — the same algorithm used by HotSpot JIT and early LLVM.
+### Register Allocation: Stack-Slot Model (linear scan planned)
+The compiler currently assigns **every virtual register its own stack slot** — always correct, and the copy-propagation pass removes most of the redundant loads it creates. A register-promotion pass is scaffolded but not yet wired in: the `LiveInterval` type and `PREG_SPILL` sentinel in `codegen.h` are there for a future linear-scan allocator (Poletto & Sarkar 1999), which runs in O(n log n) on sorted live intervals and lands within 10–15% of optimal — the approach used by HotSpot's client JIT and early LLVM. Until that pass exists, this README describes the design target, not shipped behavior.
 
 ### Why NASM?
 NASM has unambiguous, explicit syntax (no AT&T `%reg` prefix confusion), excellent documentation, and produces standard ELF objects compatible with any GNU linker. The 64-bit `default rel` addressing mode avoids GOT trampolines for small programs.

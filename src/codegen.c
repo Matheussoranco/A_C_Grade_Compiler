@@ -2,7 +2,7 @@
  * codegen.c — x86-64 NASM code generation.
  *
  * Architecture: System V AMD64 ABI (Linux ELF64).
- * Register allocation: Linear Scan (Poletto & Sarkar 1999).
+ * Register allocation: stack-slot model (no register promotion yet).
  *
  * Stack frame layout:
  *   [rbp + 16 + 8*(n-1)]  argument n (if > 6 args)
@@ -12,10 +12,11 @@
  *   [rbp -  8]             first local / spill slot
  *   ...
  *
- * For simplicity this codegen uses a "virtual-register → stack slot" model:
- * each virtual register is assigned a unique stack slot at [rbp - offset].
- * This guarantees correctness. The linear-scan pass then tries to promote
- * vregs to physical registers to eliminate unnecessary memory traffic.
+ * This codegen uses a "virtual-register → stack slot" model: each virtual
+ * register is assigned a unique stack slot at [rbp - offset]. This guarantees
+ * correctness for any number of vregs. A linear-scan pass to promote vregs to
+ * physical registers is designed for (see LiveInterval in codegen.h) but not
+ * yet implemented, so at present every vreg lives on the stack.
  */
 #include "../include/codegen.h"
 

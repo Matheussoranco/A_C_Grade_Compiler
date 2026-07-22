@@ -3,10 +3,12 @@
  *
  * Architecture: System V AMD64 ABI (Linux ELF64).
  *
- * Register allocation strategy: Linear Scan (Poletto & Sarkar, 1999).
- *   - Compute live intervals over virtual registers.
- *   - Allocate physical registers in a single left-to-right sweep.
- *   - Spill to the stack frame when all registers are occupied.
+ * Register allocation strategy: stack-slot model.
+ *   - Every virtual register is assigned its own 8-byte stack slot.
+ *   - This is always correct and keeps codegen simple; there is no
+ *     register-promotion pass yet.
+ *   - The LiveInterval type and PREG_SPILL sentinel below are scaffolding
+ *     for a future linear-scan (Poletto & Sarkar, 1999) pass — not wired up.
  *
  * Generated output is NASM syntax targeting Linux ELF64.
  * Link with: nasm -felf64 output.asm && gcc output.o runtime.o -o prog
