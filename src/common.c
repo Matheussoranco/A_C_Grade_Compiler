@@ -126,8 +126,9 @@ void vec_ensure(Vec *v, usize cap) {
     if (v->cap >= cap) return;
     usize new_cap = v->cap ? v->cap * 2 : 8;
     if (new_cap < cap) new_cap = cap;
-    v->items = realloc(v->items, new_cap * sizeof(void*));
-    if (!v->items) { fprintf(stderr, "OOM\n"); exit(1); }
+    void **tmp = realloc(v->items, new_cap * sizeof(void*));
+    if (!tmp) { fprintf(stderr, "OOM\n"); exit(1); }
+    v->items = tmp;
     v->cap = new_cap;
 }
 
@@ -166,7 +167,9 @@ static void sb_grow(StrBuf *sb, usize needed) {
     if (sb->len + needed + 1 <= sb->cap) return;
     usize new_cap = sb->cap * 2;
     if (new_cap < sb->len + needed + 1) new_cap = sb->len + needed + 256;
-    sb->buf = realloc(sb->buf, new_cap);
+    char *tmp = realloc(sb->buf, new_cap);
+    if (!tmp) { fprintf(stderr, "OOM\n"); exit(1); }
+    sb->buf = tmp;
     sb->cap = new_cap;
 }
 

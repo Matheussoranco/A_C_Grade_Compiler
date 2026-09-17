@@ -25,15 +25,33 @@ IrGenCtx *irgen_new(IrBuilder *b, Arena *arena, TypeCtx *types) {
     return ctx;
 }
 
+static bool grow_loop_stacks(IrGenCtx *ctx, SrcLoc loc) {
+    int new_cap = ctx->loop_cap ? ctx->loop_cap * 2 : 16;
+    i32 *nb = arena_alloc(ctx->arena, (usize)new_cap * sizeof(i32));
+    i32 *nc = arena_alloc(ctx->arena, (usize)new_cap * sizeof(i32));
+    if (!nb || !nc) {
+        diag_error(loc, "irgen: out of memory growing loop stack");
+        return false;
+    }
+    memcpy(nb, ctx->break_stack, (usize)ctx->loop_sp * sizeof(i32));
+    memcpy(nc, ctx->cont_stack, (usize)ctx->loop_sp * sizeof(i32));
+    ctx->break_stack = nb;
+    ctx->cont_stack = nc;
+    ctx->loop_cap = new_cap;
+    return true;
+}
+
 static void push_loop(IrGenCtx *ctx, i32 brk, i32 cont) {
-    assert(ctx->loop_sp < ctx->loop_cap);
+    if (ctx->loop_sp >= ctx->loop_cap) {
+        if (!grow_loop_stacks(ctx, SRCLOC_NONE)) return;
+    }
     ctx->break_stack[ctx->loop_sp] = brk;
     ctx->cont_stack [ctx->loop_sp] = cont;
     ctx->loop_sp++;
 }
 
 static void pop_loop(IrGenCtx *ctx) {
-    assert(ctx->loop_sp > 0);
+    if (ctx->loop_sp <= 0) return;
     ctx->loop_sp--;
 }
 
@@ -502,7 +520,12 @@ static void gen_stmt(IrGenCtx *ctx, AstNode *n) {
         }
 
         case AST_BREAK: {
-            assert(ctx->loop_sp > 0);
+            if (ctx->loop_sp <= 0) {
+                diag_error(n->loc, "irgen: 'break' outside of loop");
+                IrBlock *dead = ir_block_new(b->fn, "after.break.err");
+                ir_set_block(b, dead);
+                break;
+            }
             ir_jmp(b, ctx->break_stack[ctx->loop_sp - 1], n->loc);
             IrBlock *dead = ir_block_new(b->fn, "after.break");
             ir_set_block(b, dead);
@@ -510,7 +533,12 @@ static void gen_stmt(IrGenCtx *ctx, AstNode *n) {
         }
 
         case AST_CONTINUE: {
-            assert(ctx->loop_sp > 0);
+            if (ctx->loop_sp <= 0) {
+                diag_error(n->loc, "irgen: 'continue' outside of loop");
+                IrBlock *dead = ir_block_new(b->fn, "after.cont.err");
+                ir_set_block(b, dead);
+                break;
+            }
             ir_jmp(b, ctx->cont_stack[ctx->loop_sp - 1], n->loc);
             IrBlock *dead = ir_block_new(b->fn, "after.cont");
             ir_set_block(b, dead);

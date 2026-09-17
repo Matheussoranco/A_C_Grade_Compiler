@@ -80,47 +80,53 @@ int opt_const_fold(IrFunc *f) {
  * ========================================================================= */
 int opt_copy_prop(IrFunc *f) {
     int changes = 0;
-    /* Build copy map: vreg_id → source IOp for MOV instructions */
+    /* Por bloco básico: mapa local percorrido em ordem (substitui e depois
+     * registra/invalida). Mapa global através de blocos era incorreto:
+     * ignorava redefinições e merges de controle. */
     int n = f->next_vreg;
     if (n <= 0) return 0;
     IOp *copies = calloc((usize)n, sizeof(IOp));
-    for (int i = 0; i < n; i++) copies[i].kind = IOP_UNDEF;
 
-    /* First pass: collect copies */
     for (usize bi = 0; bi < f->blocks->len; bi++) {
+        for (int i = 0; i < n; i++) copies[i].kind = IOP_UNDEF;
         IrBlock *blk = vec_at(f->blocks, bi);
         for (IrInst *inst = blk->head; inst; inst = inst->next) {
-            if (inst->op == IR_MOV && inst->dst.id >= 0 &&
-                inst->src[0].kind == IOP_VREG) {
-                copies[inst->dst.id] = inst->src[0];
-            }
-        }
-    }
-
-    /* Second pass: replace uses */
-    for (usize bi = 0; bi < f->blocks->len; bi++) {
-        IrBlock *blk = vec_at(f->blocks, bi);
-        for (IrInst *inst = blk->head; inst; inst = inst->next) {
-            /* Don't touch the copy instruction's src itself to avoid cycles */
-            if (inst->op == IR_MOV) continue;
-            for (int si = 0; si < 3; si++) {
-                IOp *s = &inst->src[si];
-                if (s->kind == IOP_VREG && s->vreg.id >= 0 &&
-                    s->vreg.id < n &&
-                    copies[s->vreg.id].kind == IOP_VREG) {
-                    *s = copies[s->vreg.id];
-                    changes++;
-                }
-            }
-            if (inst->call_args) {
-                for (usize ai = 0; ai < inst->call_args->len; ai++) {
-                    IOp *a = vec_at(inst->call_args, ai);
-                    if (a->kind == IOP_VREG && a->vreg.id >= 0 &&
-                        a->vreg.id < n &&
-                        copies[a->vreg.id].kind == IOP_VREG) {
-                        *a = copies[a->vreg.id];
+            /* 1) substitui usos pelo mapa corrente do bloco */
+            if (inst->op != IR_MOV) {
+                for (int si = 0; si < 3; si++) {
+                    IOp *s = &inst->src[si];
+                    if (s->kind == IOP_VREG && s->vreg.id >= 0 &&
+                        s->vreg.id < n &&
+                        copies[s->vreg.id].kind == IOP_VREG) {
+                        *s = copies[s->vreg.id];
                         changes++;
                     }
+                }
+                if (inst->call_args) {
+                    for (usize ai = 0; ai < inst->call_args->len; ai++) {
+                        IOp *a = vec_at(inst->call_args, ai);
+                        if (a->kind == IOP_VREG && a->vreg.id >= 0 &&
+                            a->vreg.id < n &&
+                            copies[a->vreg.id].kind == IOP_VREG) {
+                            *a = copies[a->vreg.id];
+                            changes++;
+                        }
+                    }
+                }
+            }
+            /* 2) atualiza o mapa: MOV vreg->vreg registra; qualquer
+             * redefinição invalida cópias de/para o vreg. */
+            if (inst->dst.id >= 0 && inst->dst.id < n) {
+                int d = inst->dst.id;
+                /* invalida entradas que apontavam para d */
+                for (int i = 0; i < n; i++) {
+                    if (copies[i].kind == IOP_VREG &&
+                        (copies[i].vreg.id == d || i == d))
+                        copies[i].kind = IOP_UNDEF;
+                }
+                if (inst->op == IR_MOV && inst->src[0].kind == IOP_VREG &&
+                    inst->src[0].vreg.id != d) {
+                    copies[d] = inst->src[0];
                 }
             }
         }

@@ -27,12 +27,26 @@ AstNode *parse_program(Lexer *lex, Arena *arena, TypeCtx *types);
 static char *read_file(const char *path, usize *out_len) {
     FILE *f = fopen(path, "rb");
     if (!f) { fprintf(stderr, "error: cannot open '%s': ", path); perror(""); return NULL; }
-    fseek(f, 0, SEEK_END);
+    if (fseek(f, 0, SEEK_END) != 0) {
+        fprintf(stderr, "error: cannot seek '%s': ", path); perror("");
+        fclose(f); return NULL;
+    }
     long sz = ftell(f);
+    if (sz < 0) {
+        fprintf(stderr, "error: cannot tell size of '%s': ", path); perror("");
+        fclose(f); return NULL;
+    }
     rewind(f);
     char *buf = malloc((usize)sz + 1);
-    if (!buf) { fclose(f); return NULL; }
-    usize n = fread(buf, 1, (usize)sz, f);
+    if (!buf) { fprintf(stderr, "error: out of memory reading '%s'\n", path); fclose(f); return NULL; }
+    usize n = 0;
+    if (sz > 0) {
+        n = fread(buf, 1, (usize)sz, f);
+        if (n != (usize)sz && ferror(f)) {
+            fprintf(stderr, "error: failed reading '%s': ", path); perror("");
+            free(buf); fclose(f); return NULL;
+        }
+    }
     fclose(f);
     buf[n] = '\0';
     if (out_len) *out_len = n;
