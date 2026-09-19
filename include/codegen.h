@@ -69,6 +69,11 @@ typedef struct {
     i32          spill_base; /* next available spill slot offset from rbp  */
     /* Callee-saved registers actually used — must be push/pop'd */
     bool used_callee_saved[PREG_COUNT];
+    /* Per-function IR_ALLOCA backing storage (replaces former g_alloca_* globals).
+     * Offsets are positive magnitudes: storage for vreg `id` lives at [rbp - off]. */
+    int *alloca_off;
+    int  alloca_cap;
+    int  alloca_base;
 } CodegenCtx;
 
 /* =========================================================================

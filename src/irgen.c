@@ -191,8 +191,8 @@ static IOp gen_expr(IrGenCtx *ctx, AstNode *n) {
         case AST_NULL_LIT:
             return iop_imm_int(0, n->type);
         case AST_STR_LIT: {
-            /* String literals are stored as .Lstr_N labels */
-            const char *lbl = ir_str_label(b->mod, n->str_lit.val, ctx->arena);
+            /* String literals are stored as .Lstr_N labels (decoded, len-aware) */
+            const char *lbl = ir_str_label(b->mod, n->str_lit.val, n->str_lit.len, ctx->arena);
             IOp o = iop_imm_str(lbl, n->type);
             return o;
         }

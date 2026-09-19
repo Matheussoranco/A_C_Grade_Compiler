@@ -11,6 +11,7 @@ IrModule *ir_module_new(Arena *arena, TypeCtx *types) {
     m->funcs    = vec_new();
     m->globals  = vec_new();
     m->str_lits = vec_new();
+    m->str_lit_lens = vec_new();
     m->arena    = arena;
     (void)types;
     return m;
@@ -204,12 +205,16 @@ void ir_label_def(IrBuilder *b, i32 lbl, SrcLoc loc) {
 /* =========================================================================
  * String literal interning
  * ========================================================================= */
-const char *ir_str_label(IrModule *m, const char *val, Arena *arena) {
-    /* Use index in str_lits as suffix */
-    for (usize i = 0; i < m->str_lits->len; i++)
-        if (strcmp(vec_at(m->str_lits, i), val) == 0)
+const char *ir_str_label(IrModule *m, const char *val, usize len, Arena *arena) {
+    /* Length-aware interning: decoded bytes may contain interior NUL,
+     * so compare by (len + bytes), not strcmp. */
+    for (usize i = 0; i < m->str_lits->len; i++) {
+        usize elen = (usize)(uintptr_t)vec_at(m->str_lit_lens, i);
+        if (elen == len && memcmp(vec_at(m->str_lits, i), val, len) == 0)
             return arena_strdup(arena, val); /* key not label; caller uses idx */
+    }
     vec_push(m->str_lits, (void*)val);
+    vec_push(m->str_lit_lens, (void*)(uintptr_t)len);
     return val;
 }
 

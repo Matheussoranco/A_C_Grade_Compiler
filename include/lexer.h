@@ -106,6 +106,7 @@ typedef enum {
     TOK_SEMICOLON,    /* ;   */
     TOK_COLON,        /* :   */
     TOK_COMMA,        /* ,   */
+    TOK_QUESTION,     /* ? (ternary cond ? then : else) */
 
     /* --- Control --------------------------------------------------------- */
     TOK_EOF,

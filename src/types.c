@@ -203,19 +203,25 @@ bool ty_compatible(const Type *a, const Type *b) {
     if (ty_equal(a, b)) return true;
     /* Numeric conversions */
     if (ty_is_numeric(a) && ty_is_numeric(b)) return true;
-    /* null → pointer */
-    if (b->kind == TY_PTR) return true; /* any value → pointer (with warning) */
+    /* null → pointer ONLY: the null literal has type *void, so a void*
+     * source may flow into any pointer destination. Any other value
+     * (e.g. an integer) is NOT implicitly convertible to pointer. */
+    if (a->kind == TY_PTR && b->kind == TY_PTR &&
+        a->ptr_base && a->ptr_base->kind == TY_VOID)
+        return true; /* null → T* */
     /* void* ↔ T* */
     if (a->kind == TY_PTR && b->kind == TY_PTR)
         return a->ptr_base->kind == TY_VOID || b->ptr_base->kind == TY_VOID;
     return false;
 }
 
-/* Usual arithmetic conversions (C11 §6.3.1.8 simplified) */
+/* Usual arithmetic conversions (C11 §6.3.1.8 simplified).
+ * No implicit f32→f64 promotion: f32+f32 stays f32; any mix with f64
+ * widens to f64. Cross-width conversion is explicit (FPEXT/FPTRUNC). */
 Type *ty_arith_common(TypeCtx *ctx, const Type *a, const Type *b) {
     /* float wins */
     if (a->kind == TY_F64 || b->kind == TY_F64) return ty_f64(ctx);
-    if (a->kind == TY_F32 || b->kind == TY_F32) return ty_f64(ctx);
+    if (a->kind == TY_F32 || b->kind == TY_F32) return ty_f32(ctx);
     /* promote to at least i32 */
     usize sa = a->size > 4 ? a->size : 4;
     usize sb = b->size > 4 ? b->size : 4;

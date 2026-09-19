@@ -5,6 +5,7 @@
  * Supports multi-character look-ahead via an internal ring buffer.
  */
 #include "../include/lexer.h"
+#include <errno.h>
 
 /* =========================================================================
  * Keyword table — order matters for longest-match preference.
@@ -206,17 +207,42 @@ restart:
             }
         }
         usize len = (usize)(l->src + l->pos - start);
-        /* Strip underscores for parsing */
+        /* Strip underscores for parsing. buf holds at most 63 chars + NUL;
+         * longer literals are a hard error (no silent truncation). */
         char buf[64]; usize bi = 0;
-        for (usize i = 0; i < len && bi < sizeof(buf) - 1; i++)
-            if (start[i] != '_') buf[bi++] = start[i];
+        bool truncated = false;
+        for (usize i = 0; i < len; i++) {
+            if (start[i] == '_') continue;
+            if (bi >= sizeof(buf) - 1) { truncated = true; break; }
+            buf[bi++] = start[i];
+        }
         buf[bi] = '\0';
+        if (truncated) {
+            diag_error(loc, "numeric literal too long (%zu chars, max 63)", len);
+            Token t = make_tok(l, is_float ? TOK_FLOAT_LIT : TOK_INT_LIT, start, len, loc);
+            t.int_val = 0; t.flt_val = 0.0;
+            return t;
+        }
 
         Token t = make_tok(l, is_float ? TOK_FLOAT_LIT : TOK_INT_LIT, start, len, loc);
+        errno = 0;
         if (is_float) {
-            t.flt_val = strtod(buf, NULL);
+            char *end = NULL;
+            double v = strtod(buf, &end);
+            if (errno == ERANGE)
+                diag_error(loc, "float literal out of range '%.*s'", (int)len, start);
+            if (end == buf)
+                diag_error(loc, "invalid float literal '%.*s'", (int)len, start);
+            t.flt_val = v;
         } else {
-            t.int_val = (i64)strtoull(buf, NULL, 0);
+            char *end = NULL;
+            errno = 0;
+            unsigned long long v = strtoull(buf, &end, 0);
+            if (errno == ERANGE)
+                diag_error(loc, "integer literal out of range '%.*s'", (int)len, start);
+            if (end == buf)
+                diag_error(loc, "invalid integer literal '%.*s'", (int)len, start);
+            t.int_val = (i64)v;
         }
         return t;
     }
@@ -289,6 +315,7 @@ restart:
     OP1(';', TOK_SEMICOLON);
     OP1(':', TOK_COLON);
     OP1(',', TOK_COMMA);
+    OP1('?', TOK_QUESTION);
 
 #undef OP3
 #undef OP2
@@ -431,6 +458,7 @@ const char *tok_kind_name(TokKind k) {
         case TOK_SEMICOLON:    return ";";
         case TOK_COLON:        return ":";
         case TOK_COMMA:        return ",";
+        case TOK_QUESTION:     return "?";
         case TOK_EOF:          return "EOF";
         case TOK_ERROR:        return "ERROR";
         default:               return "?";

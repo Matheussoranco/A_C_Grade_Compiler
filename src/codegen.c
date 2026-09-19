@@ -93,6 +93,9 @@ CodegenCtx *codegen_new(IrModule *mod, Arena *arena) {
     ctx->mod   = mod;
     ctx->arena = arena;
     ctx->out   = sb_new();
+    ctx->alloca_off = NULL;
+    ctx->alloca_cap = 0;
+    ctx->alloca_base = 0;
     return ctx;
 }
 
@@ -254,11 +257,8 @@ static const char *size_kw(usize sz) {
  * ========================================================================= */
 /* Dedicated backing storage for IR_ALLOCA: each alloca vreg gets its own
  * region sized by the pointee type (aligned to 8), placed below the vreg
- * spill area. Table built per-function in gen_func. */
-static int *g_alloca_off = NULL;
-static int  g_alloca_cap = 0;
-static int  g_alloca_bump = 0;
-static int  g_alloca_base = 0;
+ * spill area. Table built per-function in gen_func and stored on CodegenCtx
+ * (no globals: keeps concurrent/sequential compilations independent). */
 
 static usize alloca_slot_size(VReg dst) {
     usize sz = 8;
@@ -290,33 +290,38 @@ static int calc_frame_size(IrFunc *f) {
 /* Build per-function alloca offset table. Must be called after frame size
  * is known and before emitting instructions of `f`. Offsets are positive
  * magnitudes: storage for vreg `id` lives at [rbp - off]. */
-static void build_alloca_table(IrFunc *f) {
-    free(g_alloca_off);
-    g_alloca_off = NULL;
-    g_alloca_cap = 0;
-    g_alloca_bump = 0;
-    g_alloca_base = f->next_vreg * 8 + 8;
+static bool arg_is_f32(const IOp *a) {
+    return a && a->type && ty_is_float(a->type) && a->type->size == 4;
+}
+
+static bool type_is_f32(const Type *t) {
+    return t && ty_is_float(t) && t->size == 4;
+}
+
+static void build_alloca_table(CodegenCtx *ctx, IrFunc *f) {
+    free(ctx->alloca_off);
+    ctx->alloca_off = NULL;
+    ctx->alloca_cap = 0;
+    ctx->alloca_base = f->next_vreg * 8 + 8;
     if (f->next_vreg <= 0) return;
-    g_alloca_cap = f->next_vreg;
-    g_alloca_off = calloc((usize)g_alloca_cap, sizeof(int));
-    if (!g_alloca_off) { g_alloca_cap = 0; return; }
-    int cur = g_alloca_base;
+    ctx->alloca_cap = f->next_vreg;
+    ctx->alloca_off = calloc((usize)ctx->alloca_cap, sizeof(int));
+    if (!ctx->alloca_off) { ctx->alloca_cap = 0; return; }
+    int cur = ctx->alloca_base;
     for (usize bi = 0; bi < f->blocks->len; bi++) {
         IrBlock *blk = vec_at(f->blocks, bi);
         for (IrInst *inst = blk->head; inst; inst = inst->next) {
             if (inst->op == IR_ALLOCA && inst->dst.id >= 0 &&
-                inst->dst.id < g_alloca_cap) {
+                inst->dst.id < ctx->alloca_cap) {
                 usize sz = alloca_slot_size(inst->dst);
                 /* Align each region start to 8 relative to rbp. */
                 cur = (int)(((usize)cur + 7u) & ~7u);
                 /* Storage occupies [rbp-cur-sz, rbp-cur); pointer = bottom. */
-                g_alloca_off[inst->dst.id] = cur + (int)sz;
+                ctx->alloca_off[inst->dst.id] = cur + (int)sz;
                 cur += (int)sz;
             }
         }
     }
-    g_alloca_bump = cur;
-    (void)g_alloca_bump;
 }
 
 /* =========================================================================
@@ -353,8 +358,8 @@ static void gen_inst(CodegenCtx *ctx, IrInst *inst) {
              * vreg's own 8B spill slot. */
             if (dst.id >= 0) {
                 int off = 0;
-                if (g_alloca_off && dst.id < g_alloca_cap && g_alloca_off[dst.id] != 0)
-                    off = g_alloca_off[dst.id];
+                if (ctx->alloca_off && dst.id < ctx->alloca_cap && ctx->alloca_off[dst.id] != 0)
+                    off = ctx->alloca_off[dst.id];
                 else
                     off = -(vreg_slot(dst.id)); /* fallback: own slot */
                 EMITL("lea rax, [rbp-%d]", off);
@@ -846,39 +851,71 @@ static void gen_inst(CodegenCtx *ctx, IrInst *inst) {
                 EMITL("sub rsp, %zu", extra);
             }
 
-            /* Second pass: emit moves. Stack args in order via mov. */
+            /* Second pass: emit moves. Stack args in order via mov.
+             * f32 (sz==4) uses movss/dword + movd; f64 uses movsd/qword + movq.
+             * Using movsd/qword for f32 would load 4 garbage bytes and corrupt
+             * the callee's xmm register. */
             int di = 0, fi = 0;
             usize stack_pos = 0;
             for (usize i = 0; i < n_args; i++) {
                 IOp *a = vec_at(inst->call_args, i);
                 bool is_flt = a->type && ty_is_float(a->type);
                 if (is_flt) {
+                    bool is32 = arg_is_f32(a);
+                    const char *vmov = is32 ? "movss" : "movsd";
+                    const char *vmem = is32 ? "dword" : "qword";
                     if (fi < 8) {
                         const char *xmm = flt_regs[fi++];
                         if (a->kind == IOP_VREG)
-                            EMITL("movsd %s, qword [rbp%+d]", xmm, vreg_slot(a->vreg.id));
+                            EMITL("%s %s, %s [rbp%+d]", vmov, xmm, vmem, vreg_slot(a->vreg.id));
                         else if (a->kind == IOP_IMM_FLT) {
-                            uint64_t b = 0; memcpy(&b, &a->imm_flt, sizeof b);
-                            EMITL("mov rax, 0x%llx", (unsigned long long)b);
-                            EMITL("movq %s, rax", xmm);
+                            if (is32) {
+                                float f = (float)a->imm_flt;
+                                uint32_t b = 0; memcpy(&b, &f, sizeof b);
+                                EMITL("mov eax, 0x%x", b);
+                                EMITL("movd %s, eax", xmm);
+                            } else {
+                                uint64_t b = 0; memcpy(&b, &a->imm_flt, sizeof b);
+                                EMITL("mov rax, 0x%llx", (unsigned long long)b);
+                                EMITL("movq %s, rax", xmm);
+                            }
                         } else {
                             emit_load_to(ctx, a, "rax", 8);
-                            EMITL("movq %s, rax", xmm);
+                            if (is32) {
+                                EMITL("movd %s, eax", xmm);
+                            } else {
+                                EMITL("movq %s, rax", xmm);
+                            }
                         }
                     } else {
-                        /* Float overflow: store 8-byte bits on stack. */
+                        /* Float overflow: store 4 or 8-byte bits on stack. */
                         if (a->kind == IOP_VREG)
-                            EMITL("movsd xmm15, qword [rbp%+d]", vreg_slot(a->vreg.id));
+                            EMITL("%s xmm15, %s [rbp%+d]", vmov, vmem, vreg_slot(a->vreg.id));
                         else if (a->kind == IOP_IMM_FLT) {
-                            uint64_t b = 0; memcpy(&b, &a->imm_flt, sizeof b);
-                            EMITL("mov rax, 0x%llx", (unsigned long long)b);
-                            EMITL("movq xmm15, rax");
+                            if (is32) {
+                                float f = (float)a->imm_flt;
+                                uint32_t b = 0; memcpy(&b, &f, sizeof b);
+                                EMITL("mov eax, 0x%x", b);
+                                EMITL("movd xmm15, eax");
+                            } else {
+                                uint64_t b = 0; memcpy(&b, &a->imm_flt, sizeof b);
+                                EMITL("mov rax, 0x%llx", (unsigned long long)b);
+                                EMITL("movq xmm15, rax");
+                            }
                         } else {
                             emit_load_to(ctx, a, "rax", 8);
-                            EMITL("movq xmm15, rax");
+                            if (is32)
+                                EMITL("movd xmm15, eax");
+                            else
+                                EMITL("movq xmm15, rax");
                         }
-                        EMITL("movq rax, xmm15");
-                        EMITL("mov [rsp+%zu], rax", stack_pos * 8);
+                        if (is32) {
+                            EMITL("movd eax, xmm15");
+                            EMITL("mov dword [rsp+%zu], eax", stack_pos * 8);
+                        } else {
+                            EMITL("movq rax, xmm15");
+                            EMITL("mov [rsp+%zu], rax", stack_pos * 8);
+                        }
                         stack_pos++;
                     }
                 } else {
@@ -910,11 +947,15 @@ static void gen_inst(CodegenCtx *ctx, IrInst *inst) {
                 EMITL("add rsp, %zu", extra);
             }
 
-            /* Store return value: float returns arrive in xmm0, int in rax. */
+            /* Store return value: float returns arrive in xmm0, int in rax.
+             * f32 uses movss/dword, f64 uses movsd/qword. */
             if (dst.id >= 0 && dst.type && dst.type->kind != TY_VOID) {
-                if (ty_is_float(dst.type))
-                    EMITL("movsd qword [rbp%+d], xmm0", vreg_slot(dst.id));
-                else
+                if (ty_is_float(dst.type)) {
+                    if (type_is_f32(dst.type))
+                        EMITL("movss dword [rbp%+d], xmm0", vreg_slot(dst.id));
+                    else
+                        EMITL("movsd qword [rbp%+d], xmm0", vreg_slot(dst.id));
+                } else
                     emit_store_from(ctx, "rax", dst.id, 8);
             }
             break;
@@ -924,15 +965,28 @@ static void gen_inst(CodegenCtx *ctx, IrInst *inst) {
             if (s0->kind != IOP_UNDEF) {
                 bool ret_flt = s0->type && ty_is_float(s0->type);
                 if (ret_flt) {
+                    bool r32 = s0->type && s0->type->size == 4;
+                    const char *rvmov = r32 ? "movss" : "movsd";
+                    const char *rvmem = r32 ? "dword" : "qword";
                     if (s0->kind == IOP_VREG)
-                        EMITL("movsd xmm0, qword [rbp%+d]", vreg_slot(s0->vreg.id));
+                        EMITL("%s xmm0, %s [rbp%+d]", rvmov, rvmem, vreg_slot(s0->vreg.id));
                     else if (s0->kind == IOP_IMM_FLT) {
-                        uint64_t b = 0; memcpy(&b, &s0->imm_flt, sizeof b);
-                        EMITL("mov rax, 0x%llx", (unsigned long long)b);
-                        EMITL("movq xmm0, rax");
+                        if (r32) {
+                            float f = (float)s0->imm_flt;
+                            uint32_t b = 0; memcpy(&b, &f, sizeof b);
+                            EMITL("mov eax, 0x%x", b);
+                            EMITL("movd xmm0, eax");
+                        } else {
+                            uint64_t b = 0; memcpy(&b, &s0->imm_flt, sizeof b);
+                            EMITL("mov rax, 0x%llx", (unsigned long long)b);
+                            EMITL("movq xmm0, rax");
+                        }
                     } else {
                         emit_load_to(ctx, s0, "rax", 8);
-                        EMITL("movq xmm0, rax");
+                        if (r32)
+                            EMITL("movd xmm0, eax");
+                        else
+                            EMITL("movq xmm0, rax");
                     }
                 } else {
                     usize rsz = op_size(s0);
@@ -957,7 +1011,7 @@ static void gen_inst(CodegenCtx *ctx, IrInst *inst) {
 static void gen_func(CodegenCtx *ctx, IrFunc *f) {
     int frame = calc_frame_size(f);
     ctx->frame_size = frame;
-    build_alloca_table(f);
+    build_alloca_table(ctx, f);
 
     /* Function header */
     sb_printf(ctx->out, "\nglobal %s\n%s:\n", f->name, f->name);
@@ -981,12 +1035,20 @@ static void gen_func(CodegenCtx *ctx, IrFunc *f) {
             Type *pt = f->type->fn.params ? f->type->fn.params[i] : NULL;
             bool is_flt = pt && ty_is_float(pt);
             if (is_flt) {
+                bool p32 = type_is_f32(pt);
+                const char *pmov = p32 ? "movss" : "movsd";
+                const char *pmem = p32 ? "dword" : "qword";
                 if (fi < 8) {
-                    EMITL("movsd qword [rbp%+d], %s", vreg_slot((int)i), flt_args[fi++]);
+                    EMITL("%s %s [rbp%+d], %s", pmov, pmem, vreg_slot((int)i), flt_args[fi++]);
                 } else {
                     int src_off = 16 + stack_n * 8;
-                    EMITL("mov rax, qword [rbp+%d]", src_off);
-                    EMITL("mov qword [rbp%+d], rax", vreg_slot((int)i));
+                    if (p32) {
+                        EMITL("mov eax, dword [rbp+%d]", src_off);
+                        EMITL("mov dword [rbp%+d], eax", vreg_slot((int)i));
+                    } else {
+                        EMITL("mov rax, qword [rbp+%d]", src_off);
+                        EMITL("mov qword [rbp%+d], rax", vreg_slot((int)i));
+                    }
                     stack_n++;
                 }
             } else {
@@ -1081,17 +1143,20 @@ char *codegen_emit(CodegenCtx *ctx) {
     for (usize i = 0; i < m->funcs->len; i++)
         gen_func(ctx, vec_at(m->funcs, i));
 
-    /* --- Data section: string literals --- */
+    /* --- Data section: string literals (decoded, emitted by len) --- */
     if (m->str_lits->len > 0) {
         sb_puts(out, "\nsection .data\n\n");
         for (usize i = 0; i < m->str_lits->len; i++) {
             const char *val = vec_at(m->str_lits, i);
+            usize vlen = (m->str_lit_lens && i < m->str_lit_lens->len)
+                ? (usize)(uintptr_t)vec_at(m->str_lit_lens, i)
+                : strlen(val);
             sb_printf(out, ".Lstr_%p:\n    db ", (void*)val);
-            for (usize j = 0; val[j]; j++) {
+            for (usize j = 0; j < vlen; j++) {
                 if (j) sb_puts(out, ", ");
                 sb_printf(out, "%d", (u8)val[j]);
             }
-            sb_puts(out, ", 0\n");
+            sb_puts(out, vlen ? ", 0\n" : "0\n");
         }
     }
 
@@ -1110,6 +1175,10 @@ char *codegen_emit(CodegenCtx *ctx) {
 }
 
 void codegen_free(CodegenCtx *ctx) {
-    /* arena-managed */
-    (void)ctx;
+    if (ctx && ctx->alloca_off) {
+        free(ctx->alloca_off);
+        ctx->alloca_off = NULL;
+        ctx->alloca_cap = 0;
+    }
+    /* remainder is arena-managed */
 }

@@ -79,6 +79,24 @@ static void synchronize(Parser *p) {
     }
 }
 
+/* Decl-level expect: on failure, synchronize to the next declaration
+ * boundary and report failure so the caller aborts the current decl
+ * instead of continuing with a bogus token (which caused cascades). */
+static bool expect_decl(Parser *p, TokKind k, Token *out) {
+    Token t = peek(p);
+    if (t.kind != k) {
+        diag_error(t.loc, "expected '%s', got '%s'",
+                   tok_kind_name(k), tok_kind_name(t.kind));
+        p->had_error = true;
+        synchronize(p);
+        if (out) *out = t;
+        return false;
+    }
+    if (out) *out = advance(p);
+    else advance(p);
+    return true;
+}
+
 static const char *tok_text(Parser *p, Token t) {
     return arena_strndup(p->arena, t.text, t.text_len);
 }
@@ -225,11 +243,18 @@ static AstNode *parse_prefix(Parser *p) {
         advance(p);
         return ast_char_lit(p->arena, (i32)t.int_val, loc);
     }
-    /* String literal */
+    /* String literal: decode escapes via unescape_string so "\n", "\x41",
+     * embedded NUL etc. become real bytes; length is the decoded length
+     * (codegen emits db by len, not by NUL-termination). */
     if (t.kind == TOK_STR_LIT) {
         advance(p);
-        const char *v = arena_strndup(p->arena, t.text, t.text_len);
-        return ast_str_lit(p->arena, v, t.text_len, loc);
+        usize dec_len = 0;
+        char *dec = unescape_string(t.text, t.text_len, &dec_len);
+        char *v = arena_alloc(p->arena, dec_len + 1);
+        memcpy(v, dec, dec_len);
+        v[dec_len] = '\0';
+        free(dec);
+        return ast_str_lit(p->arena, v, dec_len, loc);
     }
     /* Identifier */
     if (t.kind == TOK_IDENT) {
@@ -333,12 +358,16 @@ static AstNode *parse_expr(Parser *p, Prec min_prec) {
             continue;
         }
 
-        /* Ternary */
-        if (t.kind == TOK_PLUS && min_prec < PREC_TERNARY) {
-            /* handled below as infix */
+        /* Ternary cond ? then : else — right-assoc at PREC_TERNARY.
+         * Requires TOK_QUESTION ('?'); the dead TOK_PLUS stub was removed. */
+        if (t.kind == TOK_QUESTION && PREC_TERNARY >= min_prec) {
+            advance(p); /* consume '?' */
+            AstNode *then = parse_expr(p, PREC_TERNARY);
+            expect(p, TOK_COLON);
+            AstNode *else_ = parse_expr(p, PREC_TERNARY);
+            lhs = ast_ternary(p->arena, lhs, then, else_, loc);
+            continue;
         }
-        /* Actual ternary ? : */
-        /* We treat it as right-assoc at PREC_TERNARY, but parse it separately */
 
         /* Infix operators */
         Prec prec = tok_infix_prec(t.kind);
@@ -354,9 +383,6 @@ static AstNode *parse_expr(Parser *p, Prec min_prec) {
         }
 
         advance(p);
-
-        /* For ternary '?' we need special handling */
-        /* (Ternary is parsed at PREC_OR level since '?' is not in the table) */
 
         Prec next = is_right_assoc(t.kind) ? prec : (Prec)(prec + 1);
         AstNode *rhs = parse_expr(p, next);
@@ -533,22 +559,32 @@ static Param *parse_params(Parser *p, usize *out_count, bool *out_variadic) {
 
 static AstNode *parse_fn(Parser *p, bool is_extern) {
     SrcLoc loc = peek(p).loc;
-    expect(p, TOK_FN);
-    Token name = expect(p, TOK_IDENT);
-    expect(p, TOK_LPAREN);
+    Token name, tmp;
+    /* Abort the whole declaration on any structural expect failure
+     * (prevents cascading diagnostics from a single missing token). */
+    if (!expect_decl(p, TOK_FN, NULL)) return NULL;
+    if (!expect_decl(p, TOK_IDENT, &name)) return NULL;
+    if (!expect_decl(p, TOK_LPAREN, NULL)) return NULL;
     usize np;
     bool  variadic;
     Param *params = parse_params(p, &np, &variadic);
-    expect(p, TOK_RPAREN);
+    if (p->had_error && check(p, TOK_EOF)) return NULL;
+    if (!expect_decl(p, TOK_RPAREN, &tmp)) return NULL;
 
     Type *ret = ty_void(p->types);
     if (match(p, TOK_ARROW)) ret = parse_type(p);
 
     AstNode *body = NULL;
     if (!is_extern) {
+        if (!check(p, TOK_LBRACE)) {
+            diag_error(peek(p).loc, "expected '{' to start function body");
+            p->had_error = true;
+            synchronize(p);
+            return NULL;
+        }
         body = parse_block(p);
     } else {
-        expect(p, TOK_SEMICOLON);
+        if (!expect_decl(p, TOK_SEMICOLON, NULL)) return NULL;
     }
     return ast_fn_decl(p->arena, tok_text(p, name), params, np,
                        ret, body, is_extern, variadic, loc);
@@ -556,9 +592,10 @@ static AstNode *parse_fn(Parser *p, bool is_extern) {
 
 static AstNode *parse_struct(Parser *p) {
     SrcLoc loc = peek(p).loc;
-    expect(p, TOK_STRUCT);
-    Token name = expect(p, TOK_IDENT);
-    expect(p, TOK_LBRACE);
+    Token name;
+    if (!expect_decl(p, TOK_STRUCT, NULL)) return NULL;
+    if (!expect_decl(p, TOK_IDENT, &name)) return NULL;
+    if (!expect_decl(p, TOK_LBRACE, NULL)) return NULL;
 
     AstField tmp[64];
     usize n = 0;
@@ -573,7 +610,7 @@ static AstNode *parse_struct(Parser *p) {
         n++;
         if (!match(p, TOK_COMMA)) break;
     }
-    expect(p, TOK_RBRACE);
+    if (!expect_decl(p, TOK_RBRACE, NULL)) return NULL;
 
     AstField *fields = NULL;
     if (n > 0) {
@@ -585,13 +622,14 @@ static AstNode *parse_struct(Parser *p) {
 
 static AstNode *parse_global_let(Parser *p) {
     SrcLoc loc = peek(p).loc;
-    expect(p, TOK_LET);
-    Token name = expect(p, TOK_IDENT);
+    Token name;
+    if (!expect_decl(p, TOK_LET, NULL)) return NULL;
+    if (!expect_decl(p, TOK_IDENT, &name)) return NULL;
     Type *annot = NULL;
     if (match(p, TOK_COLON)) annot = parse_type(p);
     AstNode *init = NULL;
     if (match(p, TOK_EQ)) init = parse_expr(p, PREC_NONE);
-    expect(p, TOK_SEMICOLON);
+    if (!expect_decl(p, TOK_SEMICOLON, NULL)) return NULL;
     return ast_global_let(p->arena, tok_text(p, name), annot, init, true, loc);
 }
 

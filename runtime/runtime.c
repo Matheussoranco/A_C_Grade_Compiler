@@ -23,13 +23,29 @@ void ac_print_str(const char *s){ puts(s ? s : "(null)"); }
 void ac_newline(void)           { putchar('\n'); }
 
 int64_t  ac_read_int(void) {
-    int64_t v = 0;
-    scanf("%lld", &v);
-    return v;
+    long long v = 0;
+    int rc = scanf("%lld", &v);
+    if (rc != 1) {
+        /* EOF or invalid input: consume the rest of the line to avoid
+         * infinite loops on repeated reads, then return 0. */
+        int c;
+        if (rc == 0) {
+            while ((c = getchar()) != '\n' && c != EOF) { }
+        }
+        return 0;
+    }
+    return (int64_t)v;
 }
 double ac_read_float(void) {
     double v = 0.0;
-    scanf("%lf", &v);
+    int rc = scanf("%lf", &v);
+    if (rc != 1) {
+        int c;
+        if (rc == 0) {
+            while ((c = getchar()) != '\n' && c != EOF) { }
+        }
+        return 0.0;
+    }
     return v;
 }
 
@@ -57,9 +73,27 @@ int64_t ac_max_i(int64_t a, int64_t b) { return a > b ? a : b; }
 /* =========================================================================
  * String helpers
  * ========================================================================= */
-int64_t ac_strlen(const char *s) { return (int64_t)strlen(s); }
-int     ac_strcmp(const char *a, const char *b) { return strcmp(a, b); }
-char   *ac_strcat(char *dst, const char *src)   { return strcat(dst, src); }
+int64_t ac_strlen(const char *s) { return s ? (int64_t)strlen(s) : 0; }
+int     ac_strcmp(const char *a, const char *b) {
+    if (!a || !b) return (a == b) ? 0 : (a ? 1 : -1);
+    return strcmp(a, b);
+}
+/* Bounded strcat: the AC compiler cannot know dst capacity, so the runtime
+ * enforces a sane cap (64 KiB) and truncates instead of overflowing.
+ * Returns dst (or NULL on NULL dst). */
+#define AC_STRCAT_CAP (64u * 1024u)
+char   *ac_strcat(char *dst, const char *src) {
+    if (!dst) return NULL;
+    if (!src) return dst;
+    size_t dlen = strnlen(dst, AC_STRCAT_CAP);
+    size_t slen = strlen(src);
+    if (dlen >= AC_STRCAT_CAP) return dst; /* no room: leave unchanged */
+    size_t room = AC_STRCAT_CAP - 1 - dlen;
+    size_t copy = slen < room ? slen : room;
+    memcpy(dst + dlen, src, copy);
+    dst[dlen + copy] = '\0';
+    return dst;
+}
 
 /* =========================================================================
  * Program control

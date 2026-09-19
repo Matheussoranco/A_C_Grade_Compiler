@@ -26,8 +26,11 @@ typedef struct {
     int loop_depth;   /* >0 inside a while/for loop                  */
     Type *cur_fn_ret; /* return type of the currently-analyzed fn    */
 
-    /* Collected string literals (for the IR to emit in .data section) */
+    /* Collected string literals (for the IR to emit in .data section).
+     * str_lits holds decoded bytes (may contain interior NUL);
+     * str_lit_lens holds the decoded length parallel to str_lits. */
     Vec *str_lits; /* Vec<const char*> */
+    Vec *str_lit_lens; /* Vec<usize*> */
 } SemaCtx;
 
 SemaCtx *sema_new(Arena *arena, TypeCtx *types);

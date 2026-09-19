@@ -173,7 +173,8 @@ typedef struct IrFunc {
 typedef struct {
     Vec    *funcs;     /* Vec<IrFunc*>                                      */
     Vec    *globals;   /* Vec<Symbol*> for global variables                 */
-    Vec    *str_lits;  /* Vec<const char*> string literal values            */
+    Vec    *str_lits;  /* Vec<const char*> string literal values (decoded)  */
+    Vec    *str_lit_lens; /* Vec<usize*> decoded lengths, parallel to str_lits */
     Arena  *arena;
 } IrModule;
 
@@ -227,8 +228,8 @@ IOp iop_label(i32 id);
 IOp iop_global(Symbol *s);
 IOp iop_undef(void);
 
-/* String literal registration */
-const char *ir_str_label(IrModule *m, const char *val, Arena *arena);
+/* String literal registration (length-aware: decoded bytes may contain NUL) */
+const char *ir_str_label(IrModule *m, const char *val, usize len, Arena *arena);
 
 /* IR dump for debugging */
 void ir_dump_module(const IrModule *m, FILE *out);

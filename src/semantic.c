@@ -13,6 +13,7 @@ SemaCtx *sema_new(Arena *arena, TypeCtx *types) {
     ctx->types   = types;
     ctx->symtab  = symtab_new(arena);
     ctx->str_lits = vec_new();
+    ctx->str_lit_lens = vec_new();
     return ctx;
 }
 
@@ -162,6 +163,7 @@ static Type *sema_expr(SemaCtx *ctx, AstNode *n) {
         case AST_STR_LIT:
             n->type = ty_ptr(ctx->types, ty_char(ctx->types));
             vec_push(ctx->str_lits, (void*)n->str_lit.val);
+            vec_push(ctx->str_lit_lens, (void*)(uintptr_t)n->str_lit.len);
             return n->type;
         case AST_NULL_LIT:
             n->type = ty_ptr(ctx->types, ty_void(ctx->types));
