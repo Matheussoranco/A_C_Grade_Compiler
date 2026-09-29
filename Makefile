@@ -59,7 +59,7 @@ examples: $(TARGET) runtime/runtime.o
 	    base=$$(basename $$f .ac); \
 	    echo "Compiling $$f → build/$$base.asm"; \
 	    mkdir -p build; \
-	    ./$(TARGET) $$f -o build/$$base.asm -O1 || true; \
+	    ./$(TARGET) $$f -o build/$$base.asm -O1 || exit $$?; \
 	done
 
 # Assemble and link a specific example (Linux only, requires nasm):
