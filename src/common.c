@@ -116,6 +116,7 @@ void arena_free(Arena *a) {
  * ========================================================================= */
 Vec *vec_new(void) {
     Vec *v = malloc(sizeof(Vec));
+    if (!v) { fprintf(stderr, "OOM\n"); exit(1); }
     v->items = NULL;
     v->len   = 0;
     v->cap   = 0;
@@ -156,9 +157,11 @@ void vec_reset(Vec *v) {
  * ========================================================================= */
 StrBuf *sb_new(void) {
     StrBuf *sb = malloc(sizeof(StrBuf));
+    if (!sb) { fprintf(stderr, "OOM\n"); exit(1); }
     sb->cap = 256;
     sb->len = 0;
     sb->buf = malloc(sb->cap);
+    if (!sb->buf) { fprintf(stderr, "OOM\n"); exit(1); }
     sb->buf[0] = '\0';
     return sb;
 }
@@ -232,15 +235,18 @@ u64 fnv1a(const char *s, usize len) {
 
 HMap *hmap_new(void) {
     HMap *m = malloc(sizeof(HMap));
+    if (!m) { fprintf(stderr, "OOM\n"); exit(1); }
     m->n_buckets = HMAP_INIT_BUCKETS;
     m->count     = 0;
     m->buckets   = calloc(m->n_buckets, sizeof(HEntry*));
+    if (!m->buckets) { fprintf(stderr, "OOM\n"); exit(1); }
     return m;
 }
 
 static void hmap_rehash(HMap *m) {
     usize new_nb = m->n_buckets * 2;
     HEntry **new_b = calloc(new_nb, sizeof(HEntry*));
+    if (!new_b) { fprintf(stderr, "OOM\n"); exit(1); }
     for (usize i = 0; i < m->n_buckets; i++) {
         HEntry *e = m->buckets[i];
         while (e) {
@@ -265,6 +271,7 @@ void hmap_put(HMap *m, const char *key, void *val) {
         if (strcmp(e->key, key) == 0) { e->val = val; return; }
     }
     HEntry *e = malloc(sizeof(HEntry));
+    if (!e) { fprintf(stderr, "OOM\n"); exit(1); }
     e->key  = key;
     e->val  = val;
     e->hash = h;
@@ -315,6 +322,7 @@ void hmap_free(HMap *m) {
  * ========================================================================= */
 char *ac_strndup(const char *s, usize n) {
     char *d = malloc(n + 1);
+    if (!d) { fprintf(stderr, "OOM\n"); exit(1); }
     memcpy(d, s, n);
     d[n] = '\0';
     return d;
@@ -325,6 +333,7 @@ char *ac_strndup(const char *s, usize n) {
  * Output: malloc'd buffer with decoded bytes, *out_len set. */
 char *unescape_string(const char *s, usize len, usize *out_len) {
     char *buf = malloc(len + 1);
+    if (!buf) { fprintf(stderr, "OOM\n"); exit(1); }
     usize j = 0;
     for (usize i = 0; i < len; ) {
         if (s[i] == '\\' && i + 1 < len) {

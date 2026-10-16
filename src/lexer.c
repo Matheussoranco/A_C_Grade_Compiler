@@ -111,7 +111,7 @@ restart:
 
     /* --- Block comment --------------------------------------------------- */
     if (c == '/' && peek_ch(l, 1) == '*') {
-        advance_ch(l); advance_ch(l); /* consume '/*' */
+    advance_ch(l); advance_ch(l); /* consume the block-comment opener */
         while (l->pos < l->src_len) {
             if (l->src[l->pos] == '*' && peek_ch(l, 1) == '/') {
                 advance_ch(l); advance_ch(l);

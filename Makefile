@@ -91,29 +91,42 @@ run-primes: $(TARGET) runtime/runtime.o
 # ── Debugging targets ──────────────────────────────────────────────────────
 .PHONY: dump-ast
 dump-ast: $(TARGET)
-	./$(TARGET) examples/fibonacci.ac -dump-ast -O0 2>&1 | head -60
+	mkdir -p build
+	./$(TARGET) examples/fibonacci.ac -dump-ast -O0 >build/ast.log 2>&1
+	head -60 build/ast.log
 
 .PHONY: dump-ir
 dump-ir: $(TARGET)
-	./$(TARGET) examples/fibonacci.ac -dump-ir -O0 2>&1 | head -80
+	mkdir -p build
+	./$(TARGET) examples/fibonacci.ac -dump-ir -O0 >build/ir.log 2>&1
+	head -80 build/ir.log
 
 .PHONY: dump-toks
 dump-toks: $(TARGET)
-	./$(TARGET) examples/hello.ac -dump-toks 2>&1 | head -40
+	mkdir -p build
+	./$(TARGET) examples/hello.ac -dump-toks >build/tokens.log 2>&1
+	head -40 build/tokens.log
 
 # ── Tests ───────────────────────────────────────────────────────────────────
 .PHONY: test
 test: $(TARGET)
 	@echo "=== Running smoke tests ==="
 	@echo "--- Token dump of hello.ac ---"
-	./$(TARGET) examples/hello.ac -dump-toks | head -10
+	mkdir -p build
+	./$(TARGET) examples/hello.ac -dump-toks >build/test-tokens.log 2>&1
+	head -10 build/test-tokens.log
 	@echo "--- AST dump of fibonacci.ac ---"
-	./$(TARGET) examples/fibonacci.ac -dump-ast 2>&1 | head -20
+	./$(TARGET) examples/fibonacci.ac -dump-ast >build/test-ast.log 2>&1
+	head -20 build/test-ast.log
 	@echo "--- Compiling all examples ---"
 	@for f in $(EXAMPLES); do \
 	    base=$$(basename $$f .ac); \
 	    mkdir -p build; \
-	    ./$(TARGET) $$f -o build/$$base.asm -O1 && echo "  OK: $$f" || echo "  FAIL: $$f"; \
+	    if ./$(TARGET) "$$f" -o "build/$$base.asm" -O1; then \
+	        echo "  OK: $$f"; \
+	    else \
+	        echo "  FAIL: $$f"; exit 1; \
+	    fi; \
 	done
 	@echo "=== Tests complete ==="
 

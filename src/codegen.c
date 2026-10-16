@@ -59,32 +59,6 @@ const char *preg_name16(PReg r) { return r < PREG_COUNT ? REG16[r] : "?"; }
 const char *preg_name8 (PReg r) { return r < PREG_COUNT ? REG8[r]  : "?"; }
 const char *preg_xmm  (PReg r) { return r < PREG_COUNT ? REG64[r] : "?"; }
 
-/* Integer argument registers (System V AMD64 ABI) */
-static const PReg INT_ARG_REGS[] = {
-    PREG_RDI, PREG_RSI, PREG_RDX, PREG_RCX, PREG_R8, PREG_R9
-};
-#define N_INT_ARG_REGS 6
-
-/* Float argument registers */
-static const PReg FLT_ARG_REGS[] = {
-    PREG_XMM0,PREG_XMM1,PREG_XMM2,PREG_XMM3,
-    PREG_XMM4,PREG_XMM5,PREG_XMM6,PREG_XMM7
-};
-#define N_FLT_ARG_REGS 8
-
-/* Caller-saved (scratch) integer registers */
-static const PReg CALLER_SAVED[] = {
-    PREG_RAX, PREG_RCX, PREG_RDX, PREG_RSI, PREG_RDI,
-    PREG_R8,  PREG_R9,  PREG_R10, PREG_R11
-};
-#define N_CALLER_SAVED 9
-
-/* Callee-saved integer registers */
-static const PReg CALLEE_SAVED[] = {
-    PREG_RBX, PREG_R12, PREG_R13, PREG_R14, PREG_R15
-};
-#define N_CALLEE_SAVED 5
-
 /* =========================================================================
  * Codegen context
  * ========================================================================= */
@@ -185,9 +159,15 @@ static void emit_load_to(CodegenCtx *ctx, const IOp *op, const char *reg64,
         case IOP_IMM_INT:
             EMITL("mov %s, %lld", rname, (long long)op->imm_int);
             break;
-        case IOP_IMM_STR:
-            EMITL("lea %s, [rel .Lstr_%p]", reg64, (void*)op->imm_str);
+        case IOP_IMM_STR: {
+            usize index = 0;
+            while (index < ctx->mod->str_lits->len &&
+                   vec_at(ctx->mod->str_lits, index) != op->imm_str)
+                index++;
+            assert(index < ctx->mod->str_lits->len);
+            EMITL("lea %s, [rel ..@ac_string_%zu]", reg64, index);
             break;
+        }
         case IOP_VREG:
             if (unmapped_narrow) {
                 /* Fallback: load narrow value into rax, then mov to target. */
@@ -228,6 +208,7 @@ static void emit_load_to(CodegenCtx *ctx, const IOp *op, const char *reg64,
 
 static void emit_store_from(CodegenCtx *ctx, const char *src_reg, int vreg_id, usize size) {
     int off = vreg_slot(vreg_id);
+    src_reg = reg_small(src_reg, size);
     if (size == 8)
         EMITL("mov qword [rbp%+d], %s", off, src_reg);
     else if (size == 4)
@@ -241,15 +222,6 @@ static void emit_store_from(CodegenCtx *ctx, const char *src_reg, int vreg_id, u
 static usize op_size(const IOp *o) {
     if (!o->type) return 8;
     return o->type->size ? o->type->size : 8;
-}
-
-static const char *size_kw(usize sz) {
-    switch (sz) {
-        case 1: return "byte";
-        case 2: return "word";
-        case 4: return "dword";
-        default: return "qword";
-    }
 }
 
 /* =========================================================================
@@ -569,8 +541,10 @@ static void gen_inst(CodegenCtx *ctx, IrInst *inst) {
                         EMITL("mov eax, 0x%x", b);
                         EMITL("movd xmm0, eax");
                     }
-                } else
-                    emit_load_to(ctx, s0, "rax", 8), EMITL("movq xmm0, rax");
+                } else {
+                    emit_load_to(ctx, s0, "rax", 8);
+                    EMITL("movq xmm0, rax");
+                }
                 if (s1->kind == IOP_VREG)
                     EMITL("%s xmm1, %s [rbp%+d]", fmov, fmem, vreg_slot(s1->vreg.id));
                 else if (s1->kind == IOP_IMM_FLT) {
@@ -584,9 +558,11 @@ static void gen_inst(CodegenCtx *ctx, IrInst *inst) {
                         EMITL("mov eax, 0x%x", b);
                         EMITL("movd xmm1, eax");
                     }
-                } else
-                    emit_load_to(ctx, s1, "rax", 8), EMITL("movq xmm1, rax");
-                EMITL(f64 ? "ucomisd xmm0, xmm1" : "ucomiss xmm0, xmm1");
+                } else {
+                    emit_load_to(ctx, s1, "rax", 8);
+                    EMITL("movq xmm1, rax");
+                }
+                EMITL("%s", f64 ? "ucomisd xmm0, xmm1" : "ucomiss xmm0, xmm1");
                 const char *setcc;
                 switch (op) {
                     case IR_FEQ: setcc = "sete";  break;
@@ -689,7 +665,7 @@ static void gen_inst(CodegenCtx *ctx, IrInst *inst) {
                 emit_load_to(ctx, s0, "rax", 8);
                 EMITL("movq xmm0, rax");
             }
-            EMITL(src64 ? "cvttsd2si rax, xmm0" : "cvttss2si rax, xmm0");
+            EMITL("%s", src64 ? "cvttsd2si rax, xmm0" : "cvttss2si rax, xmm0");
             if (dst.id >= 0) emit_store_from(ctx, "rax", dst.id, sz);
             break;
         }
@@ -935,9 +911,17 @@ static void gen_inst(CodegenCtx *ctx, IrInst *inst) {
             else
                 EMITL("mov eax, %d", n_flt_regs);
 
-            if (callee_name)
-                EMITL("call %s", callee_name);
-            else {
+            if (callee_name) {
+                bool local = false;
+                for (usize i = 0; i < ctx->mod->funcs->len; i++) {
+                    IrFunc *func = vec_at(ctx->mod->funcs, i);
+                    if (strcmp(func->name, callee_name) == 0) {
+                        local = true;
+                        break;
+                    }
+                }
+                EMITL("call %s%s", callee_name, local ? "" : " wrt ..plt");
+            } else {
                 emit_load_to(ctx, &inst->src[0], "rax", 8);
                 EMITL("call rax");
             }
@@ -1071,8 +1055,6 @@ static void gen_func(CodegenCtx *ctx, IrFunc *f) {
     /* Emit instructions from all blocks */
     for (usize bi = 0; bi < f->blocks->len; bi++) {
         IrBlock *blk = vec_at(f->blocks, bi);
-        if (bi > 0)
-            sb_printf(ctx->out, ".L%d:\n", blk->id);
         for (IrInst *inst = blk->head; inst; inst = inst->next)
             gen_inst(ctx, inst);
     }
@@ -1151,7 +1133,7 @@ char *codegen_emit(CodegenCtx *ctx) {
             usize vlen = (m->str_lit_lens && i < m->str_lit_lens->len)
                 ? (usize)(uintptr_t)vec_at(m->str_lit_lens, i)
                 : strlen(val);
-            sb_printf(out, ".Lstr_%p:\n    db ", (void*)val);
+            sb_printf(out, "..@ac_string_%zu:\n    db ", i);
             for (usize j = 0; j < vlen; j++) {
                 if (j) sb_puts(out, ", ");
                 sb_printf(out, "%d", (u8)val[j]);
@@ -1171,6 +1153,7 @@ char *codegen_emit(CodegenCtx *ctx) {
         }
     }
 
+    sb_puts(out, "\nsection .note.GNU-stack noalloc noexec nowrite progbits\n");
     return sb_take(out);
 }
 

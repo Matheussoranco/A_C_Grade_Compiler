@@ -564,20 +564,20 @@ static void gen_fn(IrGenCtx *ctx, AstNode *decl) {
     b->fn  = fn;
     b->cur = entry;
 
-    /* Allocate slots for parameters */
+    /* Reserve all incoming parameter registers before allocating local slots.
+     * The ABI prologue initializes vregs 0..n_params-1. */
+    for (usize i = 0; i < decl->fn.n_params; i++) {
+        Param *par = &decl->fn.params[i];
+        ir_alloc_vreg(b, par->type, par->name);
+    }
+
+    /* Store each incoming value into its addressable local parameter slot. */
     for (usize i = 0; i < decl->fn.n_params; i++) {
         Param *par = &decl->fn.params[i];
         if (!par->sym) continue;
-        /* Allocate a local slot and store the incoming param value there.
-         * Params are supplied as VRegs with ids starting at 0. */
-        VReg param_vreg = ir_alloc_vreg(b, par->type, par->name);
+        VReg param_vreg = *(VReg *)vec_at(fn->vregs, i);
         VReg slot_ptr   = ir_alloca(b, par->type, par->loc);
         par->sym->ir_reg = slot_ptr.id;
-        /* Emit a move from the incoming param vreg to the slot */
-        IrInst *mv = ir_emit(b, IR_MOV, param_vreg,
-                             iop_imm_int((i64)i, ty_i32(ctx->types)),
-                             iop_undef(), iop_undef(), par->loc);
-        (void)mv;
         ir_store(b, iop_vreg(slot_ptr), iop_vreg(param_vreg), par->loc);
     }
 

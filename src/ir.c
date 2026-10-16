@@ -185,21 +185,18 @@ VReg ir_cast(IrBuilder *b, IrOp op, IOp src, Type *to, SrcLoc loc) {
 }
 
 i32 ir_label_new(IrBuilder *b, const char *name) {
-    IrBlock *blk = ir_block_new(b->fn, name);
-    return blk->id;
+    (void)name;
+    return b->fn->next_label++;
 }
 
 void ir_label_def(IrBuilder *b, i32 lbl, SrcLoc loc) {
+    /* Append blocks in definition order, preserving source fall-through. */
+    IrBlock *blk = ir_block_new(b->fn, NULL);
+    blk->id = lbl;
+    b->cur = blk;
     IrInst *inst = ir_emit(b, IR_LABEL_DEF, VREG_NONE,
                            iop_undef(), iop_undef(), iop_undef(), loc);
     inst->label_id = lbl;
-    /* Also switch current block if the label corresponds to a real block */
-    if (b->fn) {
-        for (usize i = 0; i < b->fn->blocks->len; i++) {
-            IrBlock *blk = vec_at(b->fn->blocks, i);
-            if (blk->id == lbl) { b->cur = blk; return; }
-        }
-    }
 }
 
 /* =========================================================================
@@ -211,7 +208,7 @@ const char *ir_str_label(IrModule *m, const char *val, usize len, Arena *arena) 
     for (usize i = 0; i < m->str_lits->len; i++) {
         usize elen = (usize)(uintptr_t)vec_at(m->str_lit_lens, i);
         if (elen == len && memcmp(vec_at(m->str_lits, i), val, len) == 0)
-            return arena_strdup(arena, val); /* key not label; caller uses idx */
+            return vec_at(m->str_lits, i); /* reuse the canonical decoded bytes */
     }
     vec_push(m->str_lits, (void*)val);
     vec_push(m->str_lit_lens, (void*)(uintptr_t)len);

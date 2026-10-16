@@ -107,7 +107,11 @@ int main(int argc, char **argv) {
         /* Derive output name from input: foo.ac → foo.asm */
         usize len = strlen(input_file);
         char *out = malloc(len + 5);
-        memcpy(out, input_file, len);
+        if (!out) {
+            fprintf(stderr, "acc: out of memory\n");
+            return 1;
+        }
+        memcpy(out, input_file, len + 1);
         /* Strip .ac extension if present */
         if (len > 3 && strcmp(out + len - 3, ".ac") == 0) out[len - 3] = '\0';
         strcat(out, ".asm");
@@ -173,12 +177,7 @@ int main(int argc, char **argv) {
     IrGenCtx *irgen_ctx = irgen_new(builder, arena, types);
     irgen_program(irgen_ctx, program);
 
-    /* Copy string literals from sema context into IR module (with lengths) */
-    for (usize i = 0; i < sema->str_lits->len; i++) {
-        vec_push(ir_mod->str_lits, vec_at(sema->str_lits, i));
-        void *lens = i < sema->str_lit_lens->len ? vec_at(sema->str_lit_lens, i) : (void*)(uintptr_t)strlen((const char*)vec_at(sema->str_lits, i));
-        vec_push(ir_mod->str_lit_lens, lens);
-    }
+    /* IR lowering already interns each literal with its decoded byte length. */
 
     if (dump_ir) {
         fprintf(stderr, "=== IR (pre-optimization) ===\n");
